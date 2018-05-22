@@ -65,6 +65,11 @@ export USER="AWS"
 export REGISTRY_URL="https://$REGISTRY_URL"
 export RESOLVER=$(get_resolver)
 
+if [[ "$CREDENTIALS" == "" ]]; then
+  echo "could not get CREDENTIALS giving up"
+  exit 1
+fi
+
 update_conf
 renew_loop "$AWS_CMD" &
 
