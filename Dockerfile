@@ -1,19 +1,12 @@
-FROM nginx:1.13.8-alpine
+FROM nginx:alpine
 
-RUN apk -v --update add \
-        python \
-        py-pip \
-        && \
-    pip install --upgrade pip awscli==1.14.28 && \
-    apk -v --purge del py-pip && \
-    rm /var/cache/apk/*
+RUN apk add py2-pip --no-cache && \
+    pip install --upgrade pip awscli
 
-ADD configs/nginx/nginx.conf /etc/nginx/nginx.conf
+ADD configs/nginx/nginx.conf.tmpl /etc/nginx/nginx.conf.tmpl
 ADD configs/nginx/ssl /etc/nginx/ssl
 
 ADD configs/entrypoint.sh /entrypoint.sh
-ADD configs/auth_update.sh /auth_update.sh
-ADD configs/renew_token.sh /renew_token.sh
 
 EXPOSE 80 443
 

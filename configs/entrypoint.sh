@@ -1,97 +1,71 @@
 #!/bin/sh
+set -e
 
-nx_conf=/etc/nginx/nginx.conf
+function get_region {
+  local region=$REGION
+  if [[ "$region" == "" ]]; then
+    region=$(aws --profile ${PROFILE:-default} configure get region)
+  fi
+  if [[ "$region" == "" ]]; then
+    region=$(wget -q -O- ${AWS_IAM} | grep 'region' |cut -d'"' -f4)
+  fi
+  echo $region
+}
+
+function get_credentials {
+  local auth_token=$($AWS_CMD ecr get-authorization-token --output text | awk '{print $2}')
+  if [[ "$auth_token" == "" ]]; then
+    >&2 echo "could not get authorization token"
+    return 1
+  fi
+  echo $auth_token
+}
+
+function get_resolver {
+  local resolver=$RESOLVER
+  if [[ "$resolver" == "host" ]]; then
+    echo $(cat /etc/resolv.conf | grep "nameserver" | awk '{print $2}' | tr '\n' ' ')
+  else
+    echo ${RESOLVER:-8.8.8.8 8.8.4.4}
+  fi
+}
+
+function update_conf {
+  echo "updating the config"
+  template_file=/etc/nginx/nginx.conf.tmpl
+  nginx_cfg=/etc/nginx/nginx.conf
+    
+  cat "$template_file" | envsubst '$RESOLVER,$REGISTRY_URL,$CREDENTIALS,$USER' > "$nginx_cfg"
+  
+  cat $nginx_cfg
+  
+}
+
+function renew_loop {
+ while sleep ${RENEW_TOKEN:-6h}
+ do
+   update_conf
+   nginx -s reload
+ done
+}
 
 AWS_IAM='http://169.254.169.254/latest/dynamic/instance-identity/document'
 AWS_FOLDER='/root/.aws'
+REGION=$(get_region)
+AWS_CMD="aws --profile ${PROFILE:-default} --region $REGION"
 
-header_config() {
-    mkdir -p ${AWS_FOLDER}
-    echo "[default]" > /root/.aws/config
-}
-region_config() {
-    echo  "region = $@" >> /root/.aws/config
-}
-
-test_iam() {
-    wget -q -O- ${AWS_IAM} | grep -q 'region'
-}
-
-test_config() {
-    grep -qrni $@ ${AWS_FOLDER}
-}
-
-fix_perm() {
-    chmod 600 -R ${AWS_FOLDER}
-}
-
-# http://nginx.org/en/docs/http/ngx_http_core_module.html#resolver
-# if no resolver is declared the container will default to google dns 8.8.8.8 8.8.4.4
-case "$RESOLVER" in
-    host)
-        resolver="$(cat /etc/resolv.conf | grep "nameserver" | awk '{print $2}' | tr '\n' ' ')"
-        ;;
-    *)
-        resolver=${RESOLVER:-8.8.8.8 8.8.4.4}
-esac
-
-# test if region is mounted as secret
-if test_config region
-then
-    echo "region found in ~/.aws mounted as secret"
-# configure regions if variable specified at run time
-elif [[ "$REGION" != "" ]]
-then
-    header_config
-    region_config $REGION
-    fix_perm
-# check if the region can be pulled from AWS IAM
-elif test_iam
-then
-    echo "region detected from iam"
-    REGION=$(wget -q -O- ${AWS_IAM} | grep 'region' |cut -d'"' -f4)
-    header_config
-    region_config $REGION
-    fix_perm
-else
-  echo "No region detected"
-  exit 1
+if [[ "$REGISTRY_URL" == "" ]]; then
+  account=$($AWS_CMD sts get-caller-identity --output text | awk '{print $1}')
+  REGISTRY_URL="${account}.dkr.ecr.${REGION}.amazonaws.com"
+  echo "defaulted to REGISTRY_URL=$REGISTRY_URL"
 fi
 
-# test if key and secret are mounted as secret
-if test_config aws_access_key_id
-then
-    echo "aws key and secret found in ~/.aws mounted as secrets"
-# if both key and secret are declared
-elif [[ "$AWS_KEY" != "" && "$AWS_SECRET" != "" ]]
-then
-    echo "aws_access_key_id = $AWS_KEY
-aws_secret_access_key = $AWS_SECRET" >> ${AWS_FOLDER}/config
-    fix_perm
-# if the key and secret are not mounted as secrets
-elif test_iam
-then
-    echo "key and secret not available in ~/.aws/"
-    if aws ecr get-authorization-token | grep expiresAt
-    then
-        echo "iam role configured to allow ecr access"
-    fi
-else
-    echo "key and secret not mounted as secret, declared as variables or available from iam role"
-    exit 1
-fi
+export CREDENTIALS=$(get_credentials)
+export USER="AWS"
+export REGISTRY_URL="https://$REGISTRY_URL"
+export RESOLVER=$(get_resolver)
 
-# update the auth token
-aws_cli_exec=$(aws ecr get-login --no-include-email)
-auth=$(grep  X-Forwarded-User ${nx_conf} | awk '{print $4}'| uniq|tr -d "\n\r")
-token=$(echo "${aws_cli_exec}" | awk '{print $6}')
-auth_n=$(echo AWS:${token}  | base64 |tr -d "[:space:]")
-reg_url=$(echo "${aws_cli_exec}" | awk '{print $7}')
-
-sed -i "s|${auth%??}|${auth_n}|g" ${nx_conf}
-sed -i "s|REGISTRY_URL|$reg_url|g" ${nx_conf}
-sed -i "s|RESOLVER|${resolver}|g" ${nx_conf}
-
-/renew_token.sh &
+update_conf
+renew_loop "$AWS_CMD" &
 
 exec "$@"
