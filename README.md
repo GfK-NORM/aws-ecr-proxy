@@ -1,5 +1,7 @@
 # AWS ECR anonymous proxy
 
+# Please note the documentation if out of date!
+
 Based on official nginx alpine.
 
 [Docker image repository](https://hub.docker.com/r/catalinpan/aws-ecr-proxy/)
@@ -13,6 +15,8 @@ AWS_SECRET
 REGION
 RENEW_TOKEN - default 6h
 RESOLVER
+REGISTRY_URL
+PROFILE
 ```
 RESOLVER default values - google DNS (8.8.8.8 and 8.8.4.4).  
 Available values are:
