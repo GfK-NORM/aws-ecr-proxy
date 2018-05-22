@@ -36,9 +36,6 @@ function update_conf {
   nginx_cfg=/etc/nginx/nginx.conf
     
   cat "$template_file" | envsubst '$RESOLVER,$REGISTRY_URL,$CREDENTIALS,$USER' > "$nginx_cfg"
-  
-  cat $nginx_cfg
-  
 }
 
 function renew_loop {
