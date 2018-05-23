@@ -4,7 +4,7 @@ set -e
 function get_region {
   local region=$REGION
   if [[ "$region" == "" ]]; then
-    region=$(aws --profile ${PROFILE:-default} configure get region)
+    region=$(aws $(get_profile) configure get region)
   fi
   if [[ "$region" == "" ]]; then
     region=$(wget -q -O- ${AWS_IAM} | grep 'region' |cut -d'"' -f4)
@@ -46,10 +46,16 @@ function renew_loop {
  done
 }
 
+function get_profile {
+  if [[ "$PROFILE" != "" ]]; then
+    echo "--profile $PROFILE"
+  fi
+}
+
 AWS_IAM='http://169.254.169.254/latest/dynamic/instance-identity/document'
 AWS_FOLDER='/root/.aws'
 REGION=$(get_region)
-AWS_CMD="aws --profile ${PROFILE:-default} --region $REGION"
+AWS_CMD="aws $(get_profile) --region $REGION"
 
 if [[ "$REGISTRY_URL" == "" ]]; then
   account=$($AWS_CMD sts get-caller-identity --output text | awk '{print $1}')
