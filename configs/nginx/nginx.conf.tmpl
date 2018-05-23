@@ -8,6 +8,7 @@ http {
   ssl_certificate_key       /etc/nginx/ssl/default.key;
   server {
     listen 443 ssl;
+    listen 5000 ssl;
     listen 80;
 
     location / {
