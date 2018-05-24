@@ -1,5 +1,8 @@
 #!/bin/sh
 set -e
+function log {
+  >&2 echo "[$(date -Iseconds)] $@"
+}
 
 function get_region {
   local region=$REGION
@@ -15,23 +18,29 @@ function get_region {
 function get_credentials {
   local auth_token=$($AWS_CMD ecr get-authorization-token --output text | awk '{print $2}')
   if [[ "$auth_token" == "" ]]; then
-    >&2 echo "could not get authorization token"
-    return 1
+    log "could not get authorization token"
+    log "killing root process"
+    kill -s QUIT 1
+    exit 1
   fi
+  log "token renewed"
   echo $auth_token
 }
 
 function get_resolver {
   local resolver=$RESOLVER
   if [[ "$resolver" == "host" ]]; then
-    echo $(cat /etc/resolv.conf | grep "nameserver" | awk '{print $2}' | tr '\n' ' ')
+    resolver=$(cat /etc/resolv.conf | grep "nameserver" | awk '{print $2}' | tr '\n' ' ')
   else
-    echo ${RESOLVER:-8.8.8.8 8.8.4.4}
+    resolver=${RESOLVER:-8.8.8.8 8.8.4.4}
   fi
+  log "RESOLVER=$resolver"
+  echo $resolver
 }
 
 function update_conf {
-  echo "updating the config"
+  log "writing config"
+  
   template_file=/etc/nginx/nginx.conf.tmpl
   nginx_cfg=/etc/nginx/nginx.conf
     
@@ -39,11 +48,15 @@ function update_conf {
 }
 
 function renew_loop {
- while sleep ${RENEW_TOKEN:-6h}
- do
-   update_conf
-   nginx -s reload
- done
+  local interval=${RENEW_INTERVAL:-6h}
+  log "starting renew loop"
+  log "renew internval $interval"
+  while sleep $interval; do
+    log "renewing"
+    CREDENTIALS=$(get_credentials)
+    update_conf
+    nginx -s reload
+  done
 }
 
 function get_profile {
@@ -53,7 +66,6 @@ function get_profile {
 }
 
 AWS_IAM='http://169.254.169.254/latest/dynamic/instance-identity/document'
-AWS_FOLDER='/root/.aws'
 REGION=$(get_region)
 AWS_CMD="aws $(get_profile) --region $REGION"
 
@@ -63,17 +75,20 @@ if [[ "$REGISTRY_URL" == "" ]]; then
   echo "defaulted to REGISTRY_URL=$REGISTRY_URL"
 fi
 
+log "getting initial credentials"
 export CREDENTIALS=$(get_credentials)
 export USER="AWS"
 export REGISTRY_URL="https://$REGISTRY_URL"
 export RESOLVER=$(get_resolver)
 
+log "PID=$$"
+
 if [[ "$CREDENTIALS" == "" ]]; then
-  echo "could not get CREDENTIALS giving up"
+  log "could not get CREDENTIALS giving up"
   exit 1
 fi
 
 update_conf
-renew_loop "$AWS_CMD" &
+renew_loop &
 
 exec "$@"
